@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Reddit Scheduler</title>
+    <style>
+        body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; }
+        h1 { margin-bottom: 8px; }
+        .card { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 20px; }
+        label { display:block; margin-top: 10px; font-weight: 600; }
+        input[type="text"], input[type="url"], input[type="datetime-local"], textarea, select { width: 100%; padding: 8px; border:1px solid #ccc; border-radius:8px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border-bottom: 1px solid #eee; padding: 8px; text-align: left; vertical-align: top; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .muted { color: #666; font-size: 0.9em; }
+        .status { font-weight: 600; }
+        .ok { color: #0a7b34; }
+        .pend { color: #915100; }
+        .err { color: #b00020; white-space: pre-wrap; }
+        .btn { display: inline-block; padding: 8px 12px; border-radius: 8px; text-decoration: none; cursor: pointer; border: none; }
+        .btn-primary { background: #2962ff; color: white; }
+        .btn-danger { background: #e53935; color: white; }
+        .btn-outline { background: white; border: 1px solid #ccc; }
+        .flash { background: #f0f7ff; border: 1px solid #cfe2ff; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }
+    </style>
+    <script>
+        function onPostTypeChange() {
+            var type = document.getElementById("post_type").value;
+            var linkRow = document.getElementById("linkRow");
+            var textRow = document.getElementById("textRow");
+            var imageRow = document.getElementById("imageRow");
+            linkRow.style.display = (type === "link") ? "block" : "none";
+            textRow.style.display = (type === "text") ? "block" : "none";
+            imageRow.style.display = (type === "image") ? "block" : "none";
+        }
+        window.addEventListener("DOMContentLoaded", onPostTypeChange);
+    </script>
+</head>
+<body>
+    <h1>Reddit Scheduler</h1>
+    <div class="muted">Times are interpreted in your app timezone (<strong>{{ app_tz }}</strong>) and stored/executed in UTC.</div>
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash">{{ messages[0] }}</div>
+      {% endif %}
+    {% endwith %}
+
+    <div class="card">
+        <form method="POST" enctype="multipart/form-data">
+            <div class="row">
+                <div>
+                    <label>Subreddit (without r/)</label>
+                    <input type="text" name="subreddit" placeholder="learnpython" required />
+                </div>
+                <div>
+                    <label>Title</label>
+                    <input type="text" name="title" placeholder="Check out this resource" required />
+                </div>
+            </div>
+
+            <div class="row">
+                <div>
+                    <label>Post Type</label>
+                    <select name="post_type" id="post_type" onchange="onPostTypeChange()" required>
+                        <option value="link">Link</option>
+                        <option value="text">Text</option>
+                        <option value="image">Image</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Post Time (YYYY-MM-DD HH:MM)</label>
+                    <input type="text" name="post_time" placeholder="2025-08-25 14:30" required />
+                </div>
+            </div>
+
+            <div id="linkRow">
+                <label>URL</label>
+                <input type="url" name="content" placeholder="https://example.com" />
+            </div>
+            <div id="textRow" style="display:none">
+                <label>Text</label>
+                <textarea name="content" rows="6" placeholder="Write your post text here..."></textarea>
+            </div>
+            <div id="imageRow" style="display:none">
+                <label>Upload Image</label>
+                <input type="file" name="image_file" accept=".png,.jpg,.jpeg" />
+                <div class="muted">Or provide a path inside the container (advanced):</div>
+                <input type="text" name="content" placeholder="/data/uploads/myimage.jpg" />
+            </div>
+
+            <br/>
+            <button class="btn btn-primary" type="submit">Schedule</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Scheduled Posts</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Subreddit</th>
+                    <th>Title</th>
+                    <th>Type</th>
+                    <th>Content</th>
+                    <th>Post Time (UTC)</th>
+                    <th>Status</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for p in posts %}
+                <tr>
+                    <td>{{ p[0] }}</td>
+                    <td>r/{{ p[1] }}</td>
+                    <td>{{ p[2] }}</td>
+                    <td>{{ p[3] }}</td>
+                    <td>
+                        {% if p[3] == "link" %}
+                            <a href="{{ p[4] }}" target="_blank">{{ p[4] }}</a>
+                        {% else %}
+                            {{ p[4] }}
+                        {% endif %}
+                    </td>
+                    <td>{{ p[5] }}</td>
+                    <td class="status">
+                        {% if p[6] == 1 %}
+                            <span class="ok">✅ Posted</span>
+                        {% else %}
+                            <span class="pend">⏳ Scheduled</span>
+                        {% endif %}
+                        {% if p[7] %}
+                            <div class="err">Error: {{ p[7] }}</div>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <form method="POST" action="/delete/{{ p[0] }}">
+                            <button class="btn btn-danger" type="submit">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

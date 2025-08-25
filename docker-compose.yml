@@ -1,0 +1,18 @@
+version: "3.8"
+services:
+  reddit-scheduler:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      REDDIT_CLIENT_ID: "your_id"
+      REDDIT_CLIENT_SECRET: "your_secret"
+      REDDIT_USERNAME: "your_username"
+      REDDIT_PASSWORD: "your_password"
+      APP_TIMEZONE: "America/Chicago"
+      FLASK_SECRET_KEY: "change-me"
+      MAX_UPLOAD_MB: "10"
+    volumes:
+      - reddit_scheduler_data:/data
+volumes:
+  reddit_scheduler_data:

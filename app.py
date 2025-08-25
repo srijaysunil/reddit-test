@@ -1,12 +1,17 @@
 import os
 import sqlite3
-from flask import Flask, request, render_template, redirect, url_for, flash, jsonify
+from flask import Flask, request, render_template, redirect, url_for, flash, jsonify, send_file
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timezone
 from werkzeug.utils import secure_filename
 from pathlib import Path
 from zoneinfo import ZoneInfo
 import praw
+from urllib.parse import urlparse
+import requests
+from io import BytesIO
+from PIL import Image
+import base64
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -16,7 +21,7 @@ UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/data/uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_UPLOAD_MB", "10")) * 1024 * 1024  # MB
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg"}
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -141,10 +146,6 @@ def check_scheduled_posts():
     conn.commit()
     conn.close()
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=check_scheduled_posts, trigger="interval", minutes=1)
-scheduler.start()
-
 def convert_utc_to_central(utc_time_str):
     """Convert UTC time string to Central Time string"""
     try:
@@ -153,6 +154,51 @@ def convert_utc_to_central(utc_time_str):
         return central_dt.strftime("%Y-%m-%d %H:%M %Z")
     except Exception:
         return utc_time_str  # Return original if conversion fails
+
+def is_valid_image_path(path):
+    """Check if the path is a valid image file that exists"""
+    try:
+        path_obj = Path(path)
+        return path_obj.exists() and path_obj.is_file() and path_obj.suffix.lower()[1:] in ALLOWED_EXTENSIONS
+    except:
+        return False
+
+def get_image_preview_url(content, post_type):
+    """Generate appropriate preview URL or path for different post types"""
+    if post_type == "image":
+        if content.startswith(('http://', 'https://')):
+            # External image URL
+            return content
+        elif is_valid_image_path(content):
+            # Local file path that exists
+            return f"/image-preview/{os.path.basename(content)}"
+        else:
+            # Invalid or non-existent image
+            return None
+    elif post_type == "link":
+        # For link posts, we could generate a thumbnail using a service like microlink.io
+        # or simply return the URL for display
+        return content
+    return None
+
+@app.route("/image-preview/<filename>")
+def serve_image_preview(filename):
+    """Serve image files for preview"""
+    try:
+        # Security check to prevent directory traversal
+        safe_filename = secure_filename(filename)
+        image_path = UPLOAD_DIR / safe_filename
+        
+        if image_path.exists() and image_path.is_file():
+            return send_file(image_path)
+        else:
+            # Try to find the file in the uploads directory
+            for file in UPLOAD_DIR.glob(f"*{safe_filename}"):
+                if file.exists():
+                    return send_file(file)
+            return "Image not found", 404
+    except Exception as e:
+        return str(e), 500
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -236,11 +282,16 @@ def index():
     posts = c.fetchall()
     conn.close()
     
-    # Convert UTC times to Central Time for display
+    # Convert UTC times to Central Time for display and add preview info
     posts_with_ct = []
     for post in posts:
         post_list = list(post)
         post_list[5] = convert_utc_to_central(post[5])  # Convert post_time to CT
+        
+        # Add preview URL information
+        preview_url = get_image_preview_url(post[4], post[3])
+        post_list.append(preview_url)  # Add preview URL as additional element
+        
         posts_with_ct.append(tuple(post_list))
     
     # Get flairs for the first subreddit in the list (if any) for initial display
@@ -266,6 +317,10 @@ def delete_post(post_id: int):
     conn.close()
     flash("Deleted.")
     return redirect(url_for("index"))
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=check_scheduled_posts, trigger="interval", minutes=1)
+scheduler.start()
 
 if __name__ == "__main__":
     # Bind to all interfaces for Docker

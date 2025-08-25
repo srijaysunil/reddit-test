@@ -155,7 +155,10 @@
 </head>
 <body>
     <h1>Reddit Scheduler</h1>
-    <div class="muted">Times are interpreted in your app timezone (<strong>{{ app_tz }}</strong>) and stored/executed in UTC.</div>
+    <div class="muted">
+        Times are interpreted in your app timezone (<strong>{{ app_tz }}</strong>) and stored/executed in UTC.<br>
+        Scheduled posts display in <strong>{{ display_tz }}</strong> timezone.
+    </div>
     {% with messages = get_flashed_messages() %}
       {% if messages %}
         <div class="flash">{{ messages[0] }}</div>
@@ -247,7 +250,7 @@
                     <th>Type</th>
                     <th>Content</th>
                     <th>Flair</th>
-                    <th>Post Time (UTC)</th>
+                    <th>Post Time ({{ display_tz }})</th>
                     <th>Status</th>
                     <th>Action</th>
                 </tr>

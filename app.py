@@ -23,6 +23,8 @@ def allowed_file(filename):
 
 # Timezone for interpreting user input times
 APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "UTC"))
+# Timezone for displaying scheduled posts
+DISPLAY_TZ = ZoneInfo("America/Chicago")  # Central Time Zone
 
 # Database
 DB_FILE = os.getenv("DB_FILE", "/data/posts.db")
@@ -43,7 +45,7 @@ def init_db():
         created_at TEXT NOT NULL,
         flair_id TEXT DEFAULT NULL,
         flair_text TEXT DEFAULT NULL,
-        destination_type TEXT DEFAULT 'subreddit' -- New column: subreddit | profile
+        destination_type TEXT DEFAULT 'subreddit'
     )
     """)
     # Best-effort schema upgrades
@@ -143,6 +145,15 @@ scheduler = BackgroundScheduler()
 scheduler.add_job(func=check_scheduled_posts, trigger="interval", minutes=1)
 scheduler.start()
 
+def convert_utc_to_central(utc_time_str):
+    """Convert UTC time string to Central Time string"""
+    try:
+        utc_dt = datetime.strptime(utc_time_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+        central_dt = utc_dt.astimezone(DISPLAY_TZ)
+        return central_dt.strftime("%Y-%m-%d %H:%M %Z")
+    except Exception:
+        return utc_time_str  # Return original if conversion fails
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
@@ -225,12 +236,19 @@ def index():
     posts = c.fetchall()
     conn.close()
     
+    # Convert UTC times to Central Time for display
+    posts_with_ct = []
+    for post in posts:
+        post_list = list(post)
+        post_list[5] = convert_utc_to_central(post[5])  # Convert post_time to CT
+        posts_with_ct.append(tuple(post_list))
+    
     # Get flairs for the first subreddit in the list (if any) for initial display
     initial_flairs = []
-    if posts and posts[0][1]:  # Only if there's a subreddit
-        initial_flairs, _ = get_subreddit_flairs(posts[0][1])
+    if posts_with_ct and posts_with_ct[0][1]:  # Only if there's a subreddit
+        initial_flairs, _ = get_subreddit_flairs(posts_with_ct[0][1])
     
-    return render_template("index.html", posts=posts, app_tz=str(APP_TZ), flairs=initial_flairs)
+    return render_template("index.html", posts=posts_with_ct, app_tz=str(APP_TZ), flairs=initial_flairs, display_tz=str(DISPLAY_TZ))
 
 @app.route("/get_flairs/<subreddit>")
 def get_flairs(subreddit):

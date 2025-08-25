@@ -10,8 +10,6 @@ import praw
 from urllib.parse import urlparse
 import requests
 from io import BytesIO
-from PIL import Image
-import base64
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
@@ -170,14 +168,13 @@ def get_image_preview_url(content, post_type):
             # External image URL
             return content
         elif is_valid_image_path(content):
-            # Local file path that exists
+            # Local file path that exists - use the filename only for security
             return f"/image-preview/{os.path.basename(content)}"
         else:
             # Invalid or non-existent image
             return None
     elif post_type == "link":
-        # For link posts, we could generate a thumbnail using a service like microlink.io
-        # or simply return the URL for display
+        # For link posts, return the URL for display
         return content
     return None
 
@@ -192,13 +189,15 @@ def serve_image_preview(filename):
         if image_path.exists() and image_path.is_file():
             return send_file(image_path)
         else:
-            # Try to find the file in the uploads directory
+            # Try to find the file by matching the end of the filename
+            # (since we store with timestamp prefix)
             for file in UPLOAD_DIR.glob(f"*{safe_filename}"):
-                if file.exists():
+                if file.exists() and file.is_file():
                     return send_file(file)
             return "Image not found", 404
     except Exception as e:
-        return str(e), 500
+        app.logger.error(f"Error serving image: {e}")
+        return "Error serving image", 500
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -247,7 +246,7 @@ def index():
             file = request.files.get("image_file")
             if file and file.filename:
                 if not allowed_file(file.filename):
-                    flash("Only PNG/JPG/JPEG images are allowed.")
+                    flash("Only PNG/JPG/JPEG/GIF images are allowed.")
                     return redirect(url_for("index"))
                 safe = secure_filename(file.filename)
                 save_path = UPLOAD_DIR / f"{int(datetime.now().timestamp())}_{safe}"

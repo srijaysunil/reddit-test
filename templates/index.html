@@ -430,6 +430,41 @@
             border-color: var(--primary);
         }
 
+        .text-preview {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            background: var(--gray-100);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--gray-200);
+            font-size: 1.5rem;
+            color: var(--gray-500);
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .text-preview:hover {
+            background: var(--secondary);
+            color: white;
+            border-color: var(--secondary);
+        }
+
+        .no-preview {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            background: var(--gray-100);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 2px solid var(--gray-200);
+            font-size: 1rem;
+            color: var(--gray-400);
+            font-style: italic;
+        }
+
         .loading {
             color: var(--gray-500);
             font-style: italic;
@@ -487,7 +522,7 @@
                 padding: 16px 12px;
             }
             
-            .image-preview, .link-preview {
+            .image-preview, .link-preview, .text-preview, .no-preview {
                 width: 60px;
                 height: 60px;
             }
@@ -657,6 +692,14 @@
                     window.open(url, '_blank');
                 });
             });
+
+            // Text preview click handlers
+            document.querySelectorAll('.text-preview').forEach(textPrev => {
+                textPrev.addEventListener('click', function() {
+                    const content = this.dataset.content;
+                    alert('Text Content:\n\n' + content);
+                });
+            });
         }
 
         function closePreviewModal() {
@@ -824,7 +867,7 @@
                     <div id="imageRow" style="display:none">
                         <div class="form-group">
                             <label>🖼️ Upload Image</label>
-                            <input type="file" name="image_file" accept=".png,.jpg,.jpeg" />
+                            <input type="file" name="image_file" accept=".png,.jpg,.jpeg,.gif" />
                             <div class="muted">Or provide a path inside the container:</div>
                             <input type="text" name="content" placeholder="/data/uploads/myimage.jpg" />
                         </div>
@@ -894,18 +937,18 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    {% if p[3] == "link" %}
-                                        <div class="link-preview" data-url="{{ p[4] }}" title="Open link">
+                                    {% if p[3] == "link" and p[11] %}
+                                        <div class="link-preview" data-url="{{ p[11] }}" title="Open link">
                                             🔗
                                         </div>
-                                    {% elif p[3] == "image" and p[4] %}
-                                        <img src="{{ p[4] }}" class="image-preview" alt="Image preview" onerror="this.style.display='none'">
-                                    {% elif p[3] == "text" %}
-                                        <div class="link-preview" title="Text content" onclick="alert('{{ p[4]|replace("'", "\\'")|truncate(100) }}')">
+                                    {% elif p[3] == "image" and p[11] %}
+                                        <img src="{{ p[11] }}" class="image-preview" alt="Image preview" onerror="this.style.display='none'">
+                                    {% elif p[3] == "text" and p[4] %}
+                                        <div class="text-preview" data-content="{{ p[4] }}" title="View text content">
                                             📝
                                         </div>
                                     {% else %}
-                                        —
+                                        <div class="no-preview">No preview</div>
                                     {% endif %}
                                 </td>
                                 <td>{{ p[9] if p[9] else '—' }}</td>

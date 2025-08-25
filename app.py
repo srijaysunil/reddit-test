@@ -41,8 +41,9 @@ def init_db():
         posted INTEGER DEFAULT 0,
         last_error TEXT DEFAULT NULL,
         created_at TEXT NOT NULL,
-        flair_id TEXT DEFAULT NULL,  -- New column for flair ID
-        flair_text TEXT DEFAULT NULL -- New column for flair display text
+        flair_id TEXT DEFAULT NULL,
+        flair_text TEXT DEFAULT NULL,
+        destination_type TEXT DEFAULT 'subreddit' -- New column: subreddit | profile
     )
     """)
     # Best-effort schema upgrades
@@ -60,6 +61,10 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE scheduled_posts ADD COLUMN flair_text TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE scheduled_posts ADD COLUMN destination_type TEXT")
     except Exception:
         pass
     conn.commit()
@@ -91,17 +96,29 @@ def get_subreddit_flairs(subreddit_name):
     except Exception as e:
         return None, str(e)
 
-def post_to_reddit(subreddit, title, post_type, content, flair_id=None):
+def post_to_reddit(subreddit, title, post_type, content, flair_id=None, destination_type="subreddit"):
     try:
-        sub = reddit.subreddit(subreddit)
-        if post_type == "link":
-            submission = sub.submit(title=title, url=content, flair_id=flair_id)
-        elif post_type == "text":
-            submission = sub.submit(title=title, selftext=content, flair_id=flair_id)
-        elif post_type == "image":
-            submission = sub.submit_image(title=title, image_path=content, flair_id=flair_id)
+        if destination_type == "profile":
+            # Post to user's profile
+            if post_type == "link":
+                submission = reddit.subreddit("u_" + reddit.user.me().name).submit(title=title, url=content)
+            elif post_type == "text":
+                submission = reddit.subreddit("u_" + reddit.user.me().name).submit(title=title, selftext=content)
+            elif post_type == "image":
+                submission = reddit.subreddit("u_" + reddit.user.me().name).submit_image(title=title, image_path=content)
+            else:
+                raise ValueError(f"Unknown post_type: {post_type}")
         else:
-            raise ValueError(f"Unknown post_type: {post_type}")
+            # Post to subreddit
+            sub = reddit.subreddit(subreddit)
+            if post_type == "link":
+                submission = sub.submit(title=title, url=content, flair_id=flair_id)
+            elif post_type == "text":
+                submission = sub.submit(title=title, selftext=content, flair_id=flair_id)
+            elif post_type == "image":
+                submission = sub.submit_image(title=title, image_path=content, flair_id=flair_id)
+            else:
+                raise ValueError(f"Unknown post_type: {post_type}")
         return None  # success
     except Exception as e:
         return str(e)
@@ -110,11 +127,11 @@ def check_scheduled_posts():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    c.execute("SELECT id, subreddit, title, post_type, content, flair_id FROM scheduled_posts WHERE post_time<=? AND posted=0", (now_utc,))
+    c.execute("SELECT id, subreddit, title, post_type, content, flair_id, destination_type FROM scheduled_posts WHERE post_time<=? AND posted=0", (now_utc,))
     rows = c.fetchall()
     for row in rows:
-        post_id, subreddit, title, post_type, content, flair_id = row
-        err = post_to_reddit(subreddit, title, post_type, content, flair_id)
+        post_id, subreddit, title, post_type, content, flair_id, destination_type = row
+        err = post_to_reddit(subreddit, title, post_type, content, flair_id, destination_type)
         if err is None:
             c.execute("UPDATE scheduled_posts SET posted=1, last_error=NULL WHERE id=?", (post_id,))
         else:
@@ -135,19 +152,26 @@ def index():
         post_time_str = request.form.get("post_time", "").strip()
         flair_id = request.form.get("flair_id", "").strip()
         flair_text = request.form.get("flair_text", "").strip()
+        destination_type = request.form.get("destination_type", "subreddit")
 
-        if not subreddit or not title or not post_type or not post_time_str:
-            flash("All fields are required.")
+        if not title or not post_type or not post_time_str:
+            flash("Title, post type, and time are required.")
             return redirect(url_for("index"))
 
-        # Parse local time and convert to UTC (stored as minute precision)
+        # Validate subreddit if posting to subreddit
+        if destination_type == "subreddit" and not subreddit:
+            flash("Subreddit is required when posting to a subreddit.")
+            return redirect(url_for("index"))
+
+        # Parse datetime from the datetime-local input
         try:
-            local_naive = datetime.strptime(post_time_str, "%Y-%m-%d %H:%M")
+            # Convert from datetime-local format to datetime object
+            local_naive = datetime.fromisoformat(post_time_str.replace("T", " "))
             local_dt = local_naive.replace(tzinfo=APP_TZ)
             post_time_utc = local_dt.astimezone(timezone.utc)
             post_time_store = post_time_utc.strftime("%Y-%m-%d %H:%M")
         except Exception:
-            flash("Invalid date/time format. Use YYYY-MM-DD HH:MM")
+            flash("Invalid date/time format. Please use the datetime picker.")
             return redirect(url_for("index"))
 
         content_value = ""
@@ -184,10 +208,10 @@ def index():
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""INSERT INTO scheduled_posts
-            (subreddit, title, post_type, content, post_time, posted, last_error, created_at, flair_id, flair_text)
-            VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)""",
+            (subreddit, title, post_type, content, post_time, posted, last_error, created_at, flair_id, flair_text, destination_type)
+            VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)""",
             (subreddit, title, post_type, content_value, post_time_store, 
-             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), flair_id, flair_text)
+             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), flair_id, flair_text, destination_type)
         )
         conn.commit()
         conn.close()
@@ -197,13 +221,13 @@ def index():
     # GET
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, subreddit, title, post_type, content, post_time, posted, last_error, flair_id, flair_text FROM scheduled_posts ORDER BY post_time")
+    c.execute("SELECT id, subreddit, title, post_type, content, post_time, posted, last_error, flair_id, flair_text, destination_type FROM scheduled_posts ORDER BY post_time")
     posts = c.fetchall()
     conn.close()
     
     # Get flairs for the first subreddit in the list (if any) for initial display
     initial_flairs = []
-    if posts:
+    if posts and posts[0][1]:  # Only if there's a subreddit
         initial_flairs, _ = get_subreddit_flairs(posts[0][1])
     
     return render_template("index.html", posts=posts, app_tz=str(APP_TZ), flairs=initial_flairs)

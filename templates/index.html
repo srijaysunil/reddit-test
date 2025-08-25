@@ -24,6 +24,9 @@
         .flash { background: #f0f7ff; border: 1px solid #cfe2ff; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }
         #flair_select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
         .loading { color: #666; font-style: italic; }
+        .destination-toggle { display: flex; gap: 16px; margin-top: 10px; }
+        .destination-toggle label { display: inline-flex; align-items: center; gap: 6px; margin-top: 0; font-weight: normal; }
+        input[type="radio"] { margin: 0; }
     </style>
     <script>
         function onPostTypeChange() {
@@ -34,6 +37,26 @@
             linkRow.style.display = (type === "link") ? "block" : "none";
             textRow.style.display = (type === "text") ? "block" : "none";
             imageRow.style.display = (type === "image") ? "block" : "none";
+        }
+
+        function onDestinationChange() {
+            const destination = document.querySelector('input[name="destination_type"]:checked').value;
+            const subredditGroup = document.getElementById('subredditGroup');
+            const flairGroup = document.getElementById('flairGroup');
+            
+            if (destination === 'profile') {
+                subredditGroup.style.display = 'none';
+                flairGroup.style.display = 'none';
+            } else {
+                subredditGroup.style.display = 'block';
+                flairGroup.style.display = 'block';
+                
+                // Update flairs when switching back to subreddit mode
+                const subredditInput = document.querySelector('input[name="subreddit"]');
+                if (subredditInput.value) {
+                    updateFlairs(subredditInput.value);
+                }
+            }
         }
 
         function updateFlairs(subreddit) {
@@ -81,22 +104,52 @@
             document.getElementById('flair_text').value = selectedOption.dataset.text || '';
         }
 
+        function setDefaultDateTime() {
+            // Set default time to current time + 1 hour
+            const now = new Date();
+            now.setHours(now.getHours() + 1);
+            now.setMinutes(0);
+            now.setSeconds(0);
+            
+            // Format for datetime-local input (YYYY-MM-DDTHH:MM)
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            
+            const datetimeInput = document.getElementById('post_time');
+            datetimeInput.value = `${year}-${month}-${day}T${hours}:${minutes}`;
+        }
+
         window.addEventListener("DOMContentLoaded", function() {
             onPostTypeChange();
+            onDestinationChange();
+            setDefaultDateTime();
             
-            // Initialize flairs on page load if subreddit is pre-filled
+            // Initialize flairs on page load if subreddit is pre-filled and destination is subreddit
             const subredditInput = document.querySelector('input[name="subreddit"]');
-            if (subredditInput.value) {
+            const destination = document.querySelector('input[name="destination_type"]:checked').value;
+            
+            if (destination === 'subreddit' && subredditInput.value) {
                 updateFlairs(subredditInput.value);
             }
             
-            // Update flairs when subreddit changes
+            // Update flairs when subreddit changes (only if destination is subreddit)
             subredditInput.addEventListener('input', function(e) {
-                updateFlairs(e.target.value.trim());
+                const destination = document.querySelector('input[name="destination_type"]:checked').value;
+                if (destination === 'subreddit') {
+                    updateFlairs(e.target.value.trim());
+                }
             });
 
             // Store flair text when selection changes
             document.getElementById('flair_select').addEventListener('change', storeFlairText);
+
+            // Handle destination change
+            document.querySelectorAll('input[name="destination_type"]').forEach(radio => {
+                radio.addEventListener('change', onDestinationChange);
+            });
         });
     </script>
 </head>
@@ -111,10 +164,22 @@
 
     <div class="card">
         <form method="POST" enctype="multipart/form-data">
+            <div>
+                <label>Post Destination</label>
+                <div class="destination-toggle">
+                    <label>
+                        <input type="radio" name="destination_type" value="subreddit" checked> Post to Subreddit
+                    </label>
+                    <label>
+                        <input type="radio" name="destination_type" value="profile"> Post to My Profile
+                    </label>
+                </div>
+            </div>
+
             <div class="row">
-                <div>
+                <div id="subredditGroup">
                     <label>Subreddit (without r/)</label>
-                    <input type="text" name="subreddit" placeholder="learnpython" required />
+                    <input type="text" name="subreddit" placeholder="learnpython" />
                 </div>
                 <div>
                     <label>Title</label>
@@ -132,12 +197,12 @@
                     </select>
                 </div>
                 <div>
-                    <label>Post Time (YYYY-MM-DD HH:MM)</label>
-                    <input type="text" name="post_time" placeholder="2025-08-25 14:30" required />
+                    <label>Post Time</label>
+                    <input type="datetime-local" name="post_time" id="post_time" required />
                 </div>
             </div>
 
-            <div class="row">
+            <div class="row" id="flairGroup">
                 <div>
                     <label>Flair (Optional)</label>
                     <select name="flair_id" id="flair_select">
@@ -176,6 +241,7 @@
             <thead>
                 <tr>
                     <th>ID</th>
+                    <th>Destination</th>
                     <th>Subreddit</th>
                     <th>Title</th>
                     <th>Type</th>
@@ -190,7 +256,20 @@
                 {% for p in posts %}
                 <tr>
                     <td>{{ p[0] }}</td>
-                    <td>r/{{ p[1] }}</td>
+                    <td>
+                        {% if p[10] == 'profile' %}
+                            Profile
+                        {% else %}
+                            Subreddit
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if p[10] == 'profile' %}
+                            (Profile)
+                        {% else %}
+                            r/{{ p[1] }}
+                        {% endif %}
+                    </td>
                     <td>{{ p[2] }}</td>
                     <td>{{ p[3] }}</td>
                     <td>

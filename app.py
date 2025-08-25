@@ -1,6 +1,6 @@
 import os
 import sqlite3
-from flask import Flask, request, render_template, redirect, url_for, flash
+from flask import Flask, request, render_template, redirect, url_for, flash, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 from datetime import datetime, timezone
 from werkzeug.utils import secure_filename
@@ -40,7 +40,9 @@ def init_db():
         post_time TEXT NOT NULL, -- UTC "YYYY-MM-DD HH:MM"
         posted INTEGER DEFAULT 0,
         last_error TEXT DEFAULT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        flair_id TEXT DEFAULT NULL,  -- New column for flair ID
+        flair_text TEXT DEFAULT NULL -- New column for flair display text
     )
     """)
     # Best-effort schema upgrades
@@ -50,6 +52,14 @@ def init_db():
         pass
     try:
         c.execute("ALTER TABLE scheduled_posts ADD COLUMN created_at TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE scheduled_posts ADD COLUMN flair_id TEXT")
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE scheduled_posts ADD COLUMN flair_text TEXT")
     except Exception:
         pass
     conn.commit()
@@ -66,15 +76,30 @@ reddit = praw.Reddit(
     user_agent=os.getenv("REDDIT_USER_AGENT", "reddit-scheduler/0.3 by u/yourusername")
 )
 
-def post_to_reddit(subreddit, title, post_type, content):
+def get_subreddit_flairs(subreddit_name):
+    """Fetch available flairs for a subreddit"""
+    try:
+        sub = reddit.subreddit(subreddit_name)
+        flairs = []
+        for flair in sub.flair.link_templates:
+            flairs.append({
+                'id': flair['id'],
+                'text': flair['text'],
+                'editable': flair.get('text_editable', False)
+            })
+        return flairs, None
+    except Exception as e:
+        return None, str(e)
+
+def post_to_reddit(subreddit, title, post_type, content, flair_id=None):
     try:
         sub = reddit.subreddit(subreddit)
         if post_type == "link":
-            sub.submit(title=title, url=content)
+            submission = sub.submit(title=title, url=content, flair_id=flair_id)
         elif post_type == "text":
-            sub.submit(title=title, selftext=content)
+            submission = sub.submit(title=title, selftext=content, flair_id=flair_id)
         elif post_type == "image":
-            sub.submit_image(title=title, image_path=content)
+            submission = sub.submit_image(title=title, image_path=content, flair_id=flair_id)
         else:
             raise ValueError(f"Unknown post_type: {post_type}")
         return None  # success
@@ -85,11 +110,11 @@ def check_scheduled_posts():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    c.execute("SELECT id, subreddit, title, post_type, content FROM scheduled_posts WHERE post_time<=? AND posted=0", (now_utc,))
+    c.execute("SELECT id, subreddit, title, post_type, content, flair_id FROM scheduled_posts WHERE post_time<=? AND posted=0", (now_utc,))
     rows = c.fetchall()
     for row in rows:
-        post_id, subreddit, title, post_type, content = row
-        err = post_to_reddit(subreddit, title, post_type, content)
+        post_id, subreddit, title, post_type, content, flair_id = row
+        err = post_to_reddit(subreddit, title, post_type, content, flair_id)
         if err is None:
             c.execute("UPDATE scheduled_posts SET posted=1, last_error=NULL WHERE id=?", (post_id,))
         else:
@@ -108,6 +133,8 @@ def index():
         title = request.form.get("title", "").strip()
         post_type = request.form.get("post_type")
         post_time_str = request.form.get("post_time", "").strip()
+        flair_id = request.form.get("flair_id", "").strip()
+        flair_text = request.form.get("flair_text", "").strip()
 
         if not subreddit or not title or not post_type or not post_time_str:
             flash("All fields are required.")
@@ -157,9 +184,10 @@ def index():
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("""INSERT INTO scheduled_posts
-            (subreddit, title, post_type, content, post_time, posted, last_error, created_at)
-            VALUES (?, ?, ?, ?, ?, 0, NULL, ?)""",
-            (subreddit, title, post_type, content_value, post_time_store, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"))
+            (subreddit, title, post_type, content, post_time, posted, last_error, created_at, flair_id, flair_text)
+            VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?)""",
+            (subreddit, title, post_type, content_value, post_time_store, 
+             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M"), flair_id, flair_text)
         )
         conn.commit()
         conn.close()
@@ -169,10 +197,23 @@ def index():
     # GET
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT id, subreddit, title, post_type, content, post_time, posted, last_error FROM scheduled_posts ORDER BY post_time")
+    c.execute("SELECT id, subreddit, title, post_type, content, post_time, posted, last_error, flair_id, flair_text FROM scheduled_posts ORDER BY post_time")
     posts = c.fetchall()
     conn.close()
-    return render_template("index.html", posts=posts, app_tz=str(APP_TZ))
+    
+    # Get flairs for the first subreddit in the list (if any) for initial display
+    initial_flairs = []
+    if posts:
+        initial_flairs, _ = get_subreddit_flairs(posts[0][1])
+    
+    return render_template("index.html", posts=posts, app_tz=str(APP_TZ), flairs=initial_flairs)
+
+@app.route("/get_flairs/<subreddit>")
+def get_flairs(subreddit):
+    flairs, error = get_subreddit_flairs(subreddit)
+    if error:
+        return jsonify({"error": error}), 400
+    return jsonify({"flairs": flairs})
 
 @app.post("/delete/<int:post_id>")
 def delete_post(post_id: int):

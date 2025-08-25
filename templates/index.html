@@ -22,6 +22,8 @@
         .btn-danger { background: #e53935; color: white; }
         .btn-outline { background: white; border: 1px solid #ccc; }
         .flash { background: #f0f7ff; border: 1px solid #cfe2ff; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; }
+        #flair_select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 8px; }
+        .loading { color: #666; font-style: italic; }
     </style>
     <script>
         function onPostTypeChange() {
@@ -33,7 +35,69 @@
             textRow.style.display = (type === "text") ? "block" : "none";
             imageRow.style.display = (type === "image") ? "block" : "none";
         }
-        window.addEventListener("DOMContentLoaded", onPostTypeChange);
+
+        function updateFlairs(subreddit) {
+            if (!subreddit) {
+                document.getElementById('flair_select').innerHTML = '<option value="">No flair</option>';
+                return;
+            }
+            
+            // Show loading state
+            const select = document.getElementById('flair_select');
+            select.innerHTML = '<option value="" class="loading">Loading flairs...</option>';
+            
+            fetch(`/get_flairs/${subreddit}`)
+                .then(response => response.json())
+                .then(data => {
+                    select.innerHTML = '<option value="">No flair</option>';
+                    
+                    if (data.error) {
+                        console.error('Error fetching flairs:', data.error);
+                        select.innerHTML = '<option value="">Error loading flairs</option>';
+                        return;
+                    }
+                    
+                    if (data.flairs && data.flairs.length > 0) {
+                        data.flairs.forEach(flair => {
+                            const option = document.createElement('option');
+                            option.value = flair.id;
+                            option.textContent = flair.text;
+                            option.dataset.text = flair.text;
+                            select.appendChild(option);
+                        });
+                    } else {
+                        select.innerHTML = '<option value="">No flairs available</option>';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    select.innerHTML = '<option value="">Error loading flairs</option>';
+                });
+        }
+
+        function storeFlairText() {
+            const select = document.getElementById('flair_select');
+            const selectedOption = select.options[select.selectedIndex];
+            document.getElementById('flair_text').value = selectedOption.dataset.text || '';
+        }
+
+        window.addEventListener("DOMContentLoaded", function() {
+            onPostTypeChange();
+            
+            // Initialize flairs on page load if subreddit is pre-filled
+            const subredditInput = document.querySelector('input[name="subreddit"]');
+            if (subredditInput.value) {
+                updateFlairs(subredditInput.value);
+            }
+            
+            // Update flairs when subreddit changes
+            subredditInput.addEventListener('input', function(e) {
+                updateFlairs(e.target.value.trim());
+            });
+
+            // Store flair text when selection changes
+            document.getElementById('flair_select').addEventListener('change', storeFlairText);
+        });
     </script>
 </head>
 <body>
@@ -73,6 +137,19 @@
                 </div>
             </div>
 
+            <div class="row">
+                <div>
+                    <label>Flair (Optional)</label>
+                    <select name="flair_id" id="flair_select">
+                        <option value="">No flair</option>
+                        {% for flair in flairs %}
+                            <option value="{{ flair.id }}" data-text="{{ flair.text }}">{{ flair.text }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="flair_text" id="flair_text">
+                </div>
+            </div>
+
             <div id="linkRow">
                 <label>URL</label>
                 <input type="url" name="content" placeholder="https://example.com" />
@@ -103,6 +180,7 @@
                     <th>Title</th>
                     <th>Type</th>
                     <th>Content</th>
+                    <th>Flair</th>
                     <th>Post Time (UTC)</th>
                     <th>Status</th>
                     <th>Action</th>
@@ -122,6 +200,7 @@
                             {{ p[4] }}
                         {% endif %}
                     </td>
+                    <td>{{ p[9] if p[9] else 'None' }}</td>
                     <td>{{ p[5] }}</td>
                     <td class="status">
                         {% if p[6] == 1 %}
